@@ -1,4 +1,88 @@
-## PoC1 - test_anyone_can_see_the_stored_password:
+# PasswordStore - Audit Report
+
+## Flow assumptions
+
+- Initial:
+    - users password mapping -> Everything initially has default state: 0x0000...0 (The initial|Genesis truth)
+        - Reality1: a simple users to passwords mapping i.e., address -> bytes32
+        - Reality2: users with mapping i.e., address -> uint256 -> bytes32 : user -> passwordID -> password
+
+    - owner: default 0x000...0 (The initial|Genesis truth)
+
+- Deployer or Owner -> deploys the contract -> constructor hits on runtime -> sets owner
+
+- PasswordStore ->
+    - storePassword ->
+        - Pre-conditions:
+            - If Plain password (bad design choice): password length must be greater than zero or eight chars (based on design choice), password must not be too generic, password must contain special punctuations
+            - Hashed password(not a chosen design): Hash must be irreversible, Hash must not be too generic, could be vulnerable to brute-force, rainbow table attacks, dictionary attacks
+            - Password can't be overwritten
+            - only owner can set the password
+        - Case1: users -> storePassword(theirPassowrd) -> encryption (keccak256?, sha256, etc) -> hash -> users password mapping update (state changed) reality change -> announcement for off-chain apis (does off-chain tools worth observation specifically for this type of application)
+        - Case2: user -> storePassword(theirPassowrd) -> already have a stored password -> users can have multiple passwords for multiple purposes -> should reject the transaction or store all passwords mapped to associated users -> announcement for off-chain apis(same question as asked above)
+        - Post-conditions: password securely get stored (reality updated), announcement must not contain the password or password hash.
+
+    - retrievePassword:
+        - Pre-conditions:
+            - users must have a stored password
+            - only owner can retrieve the password
+        - Case1: retrievePassword() -> returns stored password
+        - Case2: retrievePassword(passwordID) -> returns stored password
+        - Post-conditions: Announcement must not contain the retrieved password or password hash.
+    
+
+## Invariants
+
+- Password must not be exposable to anyone other than associated user(s) | owner(s).
+
+## Expected Bad circumstances
+
+- Owner bypass
+- Anyone can set the password
+- Anyone can retrieve the password
+- Password too weak
+- Empty password or password with zero or undesired length
+- Password visible to everyone (hash or plain)
+- Password not hashed
+- DoS on storing password due to hash function failure
+- Password overwrite
+- DoS on password retrieval: Fail to retrieve password
+- Privacy issue: Exposing users addresses to the public, adversaries get to know users passwordBase|passwordStore.
+- deployer forgets to set msg.sender as the owner
+
+
+## Recon
+
+- s_password:
+    - @info: storing plain password
+    - @danger: visible to everyone on mempool
+
+    - @info: Not so private and secure password storage
+    - @danger: A skilled or seasoned solidity dev can access the password from low level.
+
+- setPassword (function):
+    - @info: Missing owner check
+    - @danger: Anyone can set password.
+
+    - @info: missing password hash mechanism
+    - @danger: plain text passwords are vulnerable
+
+    - @info: missing password length check
+    - @danger: empty password commit does nothing but consumes GAS
+
+    - @info: missing password difficulty check
+    - @danger: weak passwords can be broken easily
+
+- getPassword:
+    - @info: Invalid natSpec @param
+    - @danger: Mislead Readers, community devs, auditors
+
+    - @info: returns plain password
+    - @danger: Visible on mempool and block explorer
+
+## PoCs:
+
+### PoC1 - test_anyone_can_see_the_stored_password:
 
 ```solidity
 function test_anyone_can_see_the_stored_password() public {
@@ -60,7 +144,7 @@ function test_anyone_can_see_the_stored_password() public {
 }
 ```
 
-## PoC2 - test_password_is_visible_in_mempool_and_block_explorer:
+### PoC2 - test_password_is_visible_in_mempool_and_block_explorer:
 
 ```solidity
 function test_password_is_visible_in_mempool_and_block_explorer() public {
@@ -84,7 +168,7 @@ function test_password_is_visible_in_mempool_and_block_explorer() public {
 }
 ```
 
-## PoC3 - test_anyone_can_set_and_overwrite_the_password:
+### PoC3 - test_anyone_can_set_and_overwrite_the_password:
 
 ```solidity
 function test_anyone_can_set_and_overwrite_the_password() public {
@@ -112,7 +196,7 @@ function test_anyone_can_set_and_overwrite_the_password() public {
 }
 ```
 
-## PoC4 - test_no_hash_mechanism_for_password:
+### PoC4 - test_no_hash_mechanism_for_password:
 
 ```solidity
 function test_no_hash_mechanism_for_password() public {
@@ -131,7 +215,7 @@ function test_no_hash_mechanism_for_password() public {
 }
 ```
 
-## PoC5 - test_missing_password_length_check:
+### PoC5 - test_missing_password_length_check:
 
 ```solidity
 function test_missing_password_length_check() public {
@@ -150,7 +234,7 @@ function test_missing_password_length_check() public {
 }
 ```
 
-## PoC6 - test_missing_generic_weak_passwords_check:
+### PoC6 - test_missing_generic_weak_passwords_check:
 
 ```solidity
 function test_missing_generic_weak_passwords_check() public {
@@ -169,7 +253,7 @@ function test_missing_generic_weak_passwords_check() public {
 }
 ```
 
-## PoC7 - Invalid NatSpec hallucinate Devs, white hats, readers, researchers, and auditor:
+### PoC7 - Invalid NatSpec hallucinate Devs, white hats, readers, researchers, and auditor:
 
 ```solidity
 /*
@@ -187,3 +271,16 @@ function getPassword() external view returns (string memory) {
     return s_password;
 }
 ```
+
+
+
+
+
+
+<br/>
+<br/>
+<br/>
+<br/>
+<br/>
+
+##### Auditor|Sec-Res|Hacker: *theirrationalone*

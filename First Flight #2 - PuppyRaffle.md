@@ -1,3 +1,5 @@
+# PuppyRaffle - Audit Report
+
 ## Business Idea
 
 - The protocol provides a lottery(raffle) platform
@@ -41,6 +43,13 @@
 - Bad initialization causes DoS
 - Users and winner withdrawal may be vulnerable to reentrancy threat.
 - Winner selection method may attain liveness through external resources i.e., chainlink, may have wrong winner announcements.
+
+## Invariants
+
+- There could have only one winner at once
+- Lottery pool must be equals to the number of players into the lottery * entranceFee
+- Winner can't ever withdraw full rewards, platform charges its fee
+- Lottery can only be spinned after raffleDuration
 
 ## Reality
 
@@ -97,3 +106,213 @@
 - tokenURI: returns the URI associated to the given tokenID
 
 ## Recon
+
+- raffleDuration:
+
+```solidity
+// @question: shouldn't the raffle duration be a constant or an immutable one?
+// @danger: variable raffleDuration may cause temporal inconsistencies
+// @answer: No it shouldn't be and not necessary as well, However, This reality is missing its update capability
+// It should have a update function with owner privileges
+uint256 public raffleDuration;
+```
+
+- commonImageUri, rareImageUri, legendaryImageUri:
+
+```solidity
+// @Bug: should be a constant
+// @issue: Excessive GAS causing high deployment cost.
+string private commonImageUri = "ipfs://QmSsYRx3LpDAb1GZQm7zZ1AuHZjfbPkD6J7s9r41xu1mf8";
+
+// @Bug: should be a constant
+// @issue: Excessive GAS causing high deployment cost.
+string private rareImageUri = "ipfs://QmUPjADFGEKmfohdTaNcWhp7VGk26h5jXDA7v3VtTnTLcW";
+
+// @Bug: should be a constant
+// @issue: Excessive GAS causing high deployment cost.
+string private legendaryImageUri = "ipfs://QmYx6GsYAKnNzZ9A6NvEKV9nf1VaDzJrqDR23Y8YSkebLU";
+```
+
+- COMMON_RARITY, RARE_RARITY, LEGENDARY_RARITY:
+
+```solidity
+// @Question: Why it is public not private???
+// @Guess: It might be allowed to be used by everyone.
+// @answer: It's public for a automatic getter API availability, although guess was almost right.
+uint256 public constant COMMON_RARITY = 70;
+
+// @Question: Why it is public not private???
+// @Guess: It might be allowed to be used by everyone.
+// @answer: It's public for a automatic getter API availability, although guess was almost right.
+uint256 public constant RARE_RARITY = 25;
+
+// @Question: Why it is public not private???
+// @Guess: It might be allowed to be used by everyone.
+// @answer: It's public for a automatic getter API availability, although guess was almost right.
+uint256 public constant LEGENDARY_RARITY = 5;
+```
+
+- Events: RaffleRefunded, FeeAddressChanged
+
+```solidity
+// @Bug: Forgot to mark player as indexed one
+// @issue: Off-chain tools, APIs, and system analytics would get out of sync.
+event RaffleRefunded(address player);
+
+// @Bug: Forgot to mark newFeeAddress as indexed one
+// @issue: Fee addresse(s) could be frequent. So, Off-chain tools, APIs, and system analytics, would get out of sync.
+event FeeAddressChanged(address newFeeAddress);
+```
+
+- Constructor:
+
+```solidity
+// @info: Missing zero fee check
+// @danger: Initially, Providing platform without any economic incentive
+entranceFee = _entranceFee;
+
+// @info: Missing zero fee address check
+// @danger: fee collection may get lost.
+feeAddress = _feeAddress;
+
+// @info: First of all a variable raffle duration is a bit inconvenient itself.
+// Moreover, missing raffle duration threshold checks i.e.,
+// min duration and|or max duration
+// @danger: a raffle may span either merely for a moment or could be a prolong invincible one,
+// A DoS and|or unfair obscurity may occur.
+raffleDuration = _raffleDuration;
+
+// @Question: Raffle isn't started yet and raffle start time is being initialized here on initialization, is it okay??? or an escalation of temporal bypass????????
+// @Answer: Yes, It's indeed shouldn't be initialized here, raffleStartTime with 0 value indicates that the raffle is just initialized and deployed, Moreover to say, Lottery haven't spinned yet.
+raffleStartTime = block.timestamp;
+```
+
+- enterRaffle:
+
+```solidity
+// @BUG: players can enter into raffle after raffle close
+// @danger: players may rigged the lottery
+
+// @BUG: newPlayers with zero length can bypass the check
+// @issue: emits RaffleEnter event on zero player(s) entry
+
+// @BUG: Adversaries can create gaps into players array and can also pass phantom addresses
+// @issue: DoS due to non-existent winner(s), nobody withdraws rewards.
+require(msg.value == entranceFee * newPlayers.length, "PuppyRaffle: Must send enough to enter raffle");
+
+// ...
+
+// @BUG: DoS could occur on a high stream raffle
+// @issue: Let's say a raffle pool got so high, high pool attracted so many players
+// Checking duplicates on a very high array increases the complexity exponentially
+// Therefore, due to heavy gas consumption eventually out of GAS would hit and DoS occur.
+for (uint256 i = 0; i < players.length - 1; i++) {
+    for (uint256 j = i + 1; j < players.length; j++) {
+        require(players[i] != players[j], "PuppyRaffle: Duplicate player");
+    }
+}
+```
+
+- refund:
+
+```solidity
+// @info: ambiguous check
+require(playerAddress != address(0), "PuppyRaffle: Player already refunded, or is not active");
+
+// @BUG: Reentrancy is possible
+// @issue: Player isn't removed from players array yet.
+payable(msg.sender).sendValue(entranceFee);
+```
+
+- getActivePlayerIndex:
+
+```solidity
+function getActivePlayerIndex(address player) external view returns (uint256) {
+    for (uint256 i = 0; i < players.length; i++) {
+        // @BUG: Vulnerable to DoS
+        // @danger: iterating over a very big array may lead transaction to out of GAS exception
+        if (players[i] == player) {
+            return i;
+        }
+    }
+    // @BUG: Returns index 0 for non-existent player
+    // @danger: mislead users especially users who're about to retreat and want their refund
+    return 0;
+}
+```
+
+- selectWinner:
+
+```solidity
+// @BUG: raffleStartTime should be recorded in `enterRaffle` function when there are at least 4 or more players have entered into raffle.
+// @danger: raffle duration may occur too early after players entry.
+require(block.timestamp >= raffleStartTime + raffleDuration, "PuppyRaffle: Raffle not over");
+
+// @BUG: blank spots weakens this check
+// @danger: there could have so many blank sopts due to refund facility
+// So, in these circumstances, the consequence that the players length is greater than or equal to 4 but there're actually less than 4 players, is possible.
+require(players.length >= 4, "PuppyRaffle: Need at least 4 players");
+
+// @BUG: global parameters i.e., msg.sender, block.timestamp, block.difficulty, etc can be front-run by validators and MEV Bots
+// @danger: Possible front-run attack
+uint256 winnerIndex =
+    uint256(keccak256(abi.encodePacked(msg.sender, block.timestamp, block.difficulty))) % players.length;
+
+// @BUG: players array has blank spots so the players length isn't the actual length
+// @danger: DoS could occur due to accounting exception
+uint256 totalAmountCollected = players.length * entranceFee;
+
+// @BUG: totalFees is of type uint64, heavy accumulation may break the protocol
+// @danger: Potential overflow
+
+// @BUG: fee is of type uint256 and then wrapped to uint64 here below, fee may wrap around
+// @danger: wrap around behavior may occur
+totalFees = totalFees + uint64(fee);
+
+// @BUG: Again, global parameters, not so good choice
+// @danger: Vulnerable to front-running
+uint256 rarity = uint256(keccak256(abi.encodePacked(msg.sender, block.difficulty))) % 100;
+
+// @BUG: raffleStartTime should reset to 0
+// @danger: raffle duration may occur too early after players entry because of this reset just after winner selection
+// Therefore, raffleStartTime should update into enterRaffle when there're at least 4 or more players into the raffle.
+raffleStartTime = block.timestamp;
+```
+
+- withdrawFees:
+
+```solidity
+// @BUG: race-condition between players(malicious ones or attackers) and caller(hopfully owner)
+// @danger: As we know there's a reentrancy in the refund function, a malicious player or user can deliberately fron-run the caller of this function
+// and make the raffle active again each time whenever caller tries the call this function.
+// Parallelly, malicious user drains the contract's balance through refund function.
+require(address(this).balance == uint256(totalFees), "PuppyRaffle: There are currently players active!");
+```
+
+- _isActivePlayer:
+
+```solidity
+function _isActivePlayer() internal view returns (bool) {
+    // @BUG: Finding active player in a Big players array is dangerous
+    // @danger: Gas exhaustion revert the lookup therefore DoS occurs
+    for (uint256 i = 0; i < players.length; i++) {
+        if (players[i] == msg.sender) {
+            return true;
+        }
+    }
+    return false;
+}
+```
+
+
+
+
+
+
+<br/>
+<br/>
+<br/>
+<br/>
+<br/>
+
+##### Auditor|Sec-Res|Hacker: *theirrationalone*
