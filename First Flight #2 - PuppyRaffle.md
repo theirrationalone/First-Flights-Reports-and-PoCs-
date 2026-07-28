@@ -305,6 +305,130 @@ function _isActivePlayer() internal view returns (bool) {
 ```
 
 
+## PoCs:
+
+### testRaffleDurationCannotBeUpdated:
+
+- input: (Paste this test into: `test/PuppyRaffleTest.t.sol::PuppyRaffleTest`)
+
+```solidity
+function testRaffleDurationCannotBeUpdated() public playersEntered {
+    vm.warp(block.timestamp + duration + 1);
+    vm.roll(block.number + 1);
+
+    uint256 expectedPrizeAmount = ((entranceFee * 4) * 20) / 100;
+
+    puppyRaffle.selectWinner();
+    puppyRaffle.withdrawFees();
+    assertEq(address(feeAddress).balance, expectedPrizeAmount);
+
+    uint256 newRaffleDuration = 1 weeks;
+
+    vm.expectRevert();
+    puppyRaffle.setRaffleDuration(newRaffleDuration);
+}
+```
+
+- output:
+
+```bash
+[⠊] Compiling...
+[⠆] Compiling 21 files with Solc 0.7.6
+[⠰] Solc 0.7.6 finished in 210.80ms
+Error: Compiler run failed:
+Warning (2462): Visibility for constructor is ignored. If you want the contract to be non-deployable, making it "abstract" is sufficient.
+lib/openzeppelin-contracts/contracts/access/Ownable.sol:26:5: Warning: Visibility for constructor is ignored. If you want the contract to be non-deployable, making it "abstract" is sufficient.
+    constructor () internal {
+    ^ (Relevant source part starts here and spans across multiple lines).
+Warning (2462): Visibility for constructor is ignored. If you want the contract to be non-deployable, making it "abstract" is sufficient.
+lib/openzeppelin-contracts/contracts/introspection/ERC165.sol:24:5: Warning: Visibility for constructor is ignored. If you want the contract to be non-deployable, making it "abstract" is sufficient.
+    constructor () internal {
+    ^ (Relevant source part starts here and spans across multiple lines).
+Warning (2462): Visibility for constructor is ignored. If you want the contract to be non-deployable, making it "abstract" is sufficient.
+lib/openzeppelin-contracts/contracts/token/ERC721/ERC721.sol:93:5: Warning: Visibility for constructor is ignored. If you want the contract to be non-deployable, making it "abstract" is sufficient.
+    constructor (string memory name_, string memory symbol_) public {
+    ^ (Relevant source part starts here and spans across multiple lines).
+Error (9582): Member "setRaffleDuration" not found or not visible after argument-dependent lookup in contract PuppyRaffle.
+test/PuppyRaffleTest.t.sol:226:9: TypeError: Member "setRaffleDuration" not found or not visible after argument-dependent lookup in contract PuppyRaffle.
+        puppyRaffle.setRaffleDuration(newRaffleDuration);
+        ^---------------------------^
+```
+
+### testVariablesCanBeSetAsConstantsCauseExcessiveDeploymentCost:
+
+```solidity
+function testVariablesCanBeSetAsConstantsCauseExcessiveDeploymentCost() public {
+    // First run : Run this function without any mutation
+    // Second run: Run this function after mutating, commonImageUri, rareImageUri, legendaryImageUri, to constants, in src/PuppyRaffle.sol:PuppyRaffle contract
+    uint256 gasBeforeDeployment = gasleft();
+
+    vm.txGasPrice(1000000000000000000);
+    puppyRaffle = new PuppyRaffle(entranceFee, feeAddress, duration);
+
+    uint256 gasAfterDeployment = gasleft();
+
+    uint256 gasConsumed = gasBeforeDeployment - gasAfterDeployment;
+    uint256 gasPrice = tx.gasprice;
+    uint256 totalGasCost = gasConsumed * gasPrice;
+
+    console2.log("GAS before deployment: ", gasBeforeDeployment);
+    console2.log("GAS after  deployment: ", gasAfterDeployment);
+    console2.log("GAS Consumed         : ", gasConsumed);
+    console2.log("GAS price            : ", gasPrice);
+    console2.log("Total GAS cost       : ", totalGasCost);
+}
+```
+- output:
+
+    - Before Mutation:
+
+    ```bash
+    [⠊] Compiling...
+    No files changed, compilation skipped
+
+    Ran 1 test for test/PuppyRaffleTest.t.sol:PuppyRaffleTest
+    [PASS] testVariablesCanBeSetAsConstantsCauseExcessiveDeploymentCost() (gas: 4498848)
+    Logs:
+    GAS before deployment:  1073720530
+    GAS after  deployment:  1069228792
+    GAS Consumed         :  4491738
+    GAS price            :  1000000000000000000
+    Total GAS cost       :  4491738000000000000000000
+
+    Suite result: ok. 1 passed; 0 failed; 0 skipped; finished in 545.83µs (125.60µs CPU time)
+
+    Ran 1 test suite in 3.93ms (545.83µs CPU time): 1 tests passed, 0 failed, 0 skipped (1 total tests)
+    ```
+
+    - After Mutation:
+    
+    ```bash
+    [⠊] Compiling...
+    No files changed, compilation skipped
+
+    Ran 1 test for test/PuppyRaffleTest.t.sol:PuppyRaffleTest
+    [PASS] testVariablesCanBeSetAsConstantsCauseExcessiveDeploymentCost() (gas: 4307371)
+    Logs:
+    GAS before deployment:  1073720530
+    GAS after  deployment:  1069420269
+    GAS Consumed         :  4300261
+    GAS price            :  1000000000000000000
+    Total GAS cost       :  4300261000000000000000000
+
+    Suite result: ok. 1 passed; 0 failed; 0 skipped; finished in 611.28µs (155.29µs CPU time)
+
+    Ran 1 test suite in 4.05ms (611.28µs CPU time): 1 tests passed, 0 failed, 0 skipped (1 total tests)
+    ```
+
+    - Difference:
+
+    ```bash
+    191477
+    ```
+
+###
+
+
 
 
 
