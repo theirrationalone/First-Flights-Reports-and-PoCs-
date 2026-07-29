@@ -754,6 +754,157 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; finished in 739.39µs (118.72µ
 Ran 1 test suite in 5.89ms (739.39µs CPU time): 1 tests passed, 0 failed, 0 skipped (1 total tests)
 ```
 
+### testInaccurateRaffleStartTimeResetAndStartLogicPlayerMayLoseChanceToWinDesiredRaffle
+
+- Input: (Paste this test into: `test/PuppyRaffleTest.t.sol::PuppyRaffleTest`)
+
+```solidity
+function testInaccurateRaffleStartTimeResetAndStartLogicPlayerMayLoseChanceToWinDesiredRaffle()
+    public
+    playersEntered
+{
+    // Let's say there are 4 players entered into raffle
+    // meeting the minimum requirement of the raffle
+    // Since, the raffleStartTime is already set or updated either on deployment or on last winner announcement.
+    // and the raffle duration has been passed, Now Guess what? other players also wanted to participate into raffle
+    vm.warp(block.timestamp + duration + 1);
+    vm.roll(block.number + 1);
+
+    // However, due to temporal bug, someone (owner or anybody) is now able to execute select winner function
+    // and they lose the opportunity to participate into that specific raffle (with great reward opp).
+    puppyRaffle.selectWinner();
+
+    // Now players try to enter into raffle
+    // players -> enterRaffle -> succeed
+    // Heck what?
+    // reward is only their accumulated entranceFee
+    // where's that licious reward amount???
+}
+```
+
+- Output:
+
+```bash
+[⠊] Compiling...
+No files changed, compilation skipped
+
+Ran 1 test for test/PuppyRaffleTest.t.sol:PuppyRaffleTest
+[PASS] testInaccurateRaffleStartTimeResetAndStartLogicPlayerMayLoseChanceToWinDesiredRaffle() (gas: 281484)
+Suite result: ok. 1 passed; 0 failed; 0 skipped; finished in 765.91µs (132.54µs CPU time)
+
+Ran 1 test suite in 4.40ms (765.91µs CPU time): 1 tests passed, 0 failed, 0 skipped (1 total tests)
+```
+
+### testBlankSpotsCausesDoS
+
+- Input: (Paste this test into: `test/PuppyRaffleTest.t.sol::PuppyRaffleTest`)
+
+```solidity
+function testBlankSpotsCausesDoS() public playersEntered {
+    // Let's put some more players into the raffle
+    address[] memory morePlayers = new address[](4);
+    for (uint256 i; i < morePlayers.length; i++) {
+        morePlayers[i] = address(i + 5);
+    }
+
+    // push them up...
+    puppyRaffle.enterRaffle{value: morePlayers.length * entranceFee}(morePlayers);
+
+    // It's refund time...
+    uint256 activePlayerIndex;
+    for (uint256 i; i < morePlayers.length; i++) {
+        activePlayerIndex = puppyRaffle.getActivePlayerIndex(morePlayers[i]);
+        vm.startPrank(morePlayers[i]);
+        puppyRaffle.refund(activePlayerIndex);
+        vm.stopPrank();
+    }
+
+    // First, exit from the temporal loom...
+    vm.warp(block.timestamp + duration + 1);
+    vm.roll(block.number + 1);
+
+    // Let's see who wins?
+    vm.expectRevert();
+    puppyRaffle.selectWinner();
+}
+```
+
+- Output:
+
+```bash
+[⠊] Compiling...
+No files changed, compilation skipped
+
+Ran 1 test for test/PuppyRaffleTest.t.sol:PuppyRaffleTest
+[PASS] testBlankSpotsCausesDoS() (gas: 629265)
+Traces:
+  [802065] PuppyRaffleTest::testBlankSpotsCausesDoS()
+    ├─ [145425] PuppyRaffle::enterRaffle{value: 4000000000000000000}([0x0000000000000000000000000000000000000001, 0x0000000000000000000000000000000000000002, 0x0000000000000000000000000000000000000003, 0x0000000000000000000000000000000000000004])
+    │   ├─ emit RaffleEnter(newPlayers: [0x0000000000000000000000000000000000000001, 0x0000000000000000000000000000000000000002, 0x0000000000000000000000000000000000000003, 0x0000000000000000000000000000000000000004])
+    │   └─ ← [Stop]
+    ├─ [228469] PuppyRaffle::enterRaffle{value: 4000000000000000000}([0x0000000000000000000000000000000000000005, 0x0000000000000000000000000000000000000006, 0x0000000000000000000000000000000000000007, 0x0000000000000000000000000000000000000008])
+    │   ├─ emit RaffleEnter(newPlayers: [0x0000000000000000000000000000000000000005, 0x0000000000000000000000000000000000000006, 0x0000000000000000000000000000000000000007, 0x0000000000000000000000000000000000000008])
+    │   └─ ← [Stop]
+    ├─ [13434] PuppyRaffle::getActivePlayerIndex(ModExp: [0x0000000000000000000000000000000000000005]) [staticcall]
+    │   └─ ← [Return] 4
+    ├─ [0] VM::startPrank(ModExp: [0x0000000000000000000000000000000000000005])
+    │   └─ ← [Return]
+    ├─ [38381] PuppyRaffle::refund(4)
+    │   ├─ [0] PRECOMPILES::modexp{value: 1000000000000000000}(0x)
+    │   │   └─ ← [Return] 0x
+    │   ├─ emit RaffleRefunded(player: ModExp: [0x0000000000000000000000000000000000000005])
+    │   └─ ← [Stop]
+    ├─ [0] VM::stopPrank()
+    │   └─ ← [Return]
+    ├─ [16052] PuppyRaffle::getActivePlayerIndex(ECAdd: [0x0000000000000000000000000000000000000006]) [staticcall]
+    │   └─ ← [Return] 5
+    ├─ [0] VM::startPrank(ECAdd: [0x0000000000000000000000000000000000000006])
+    │   └─ ← [Return]
+    ├─ [38613] PuppyRaffle::refund(5)
+    │   ├─ [150] PRECOMPILES::ecadd{value: 1000000000000000000}(0x)
+    │   │   └─ ← [Return] (0, 0)
+    │   ├─ emit RaffleRefunded(player: ECAdd: [0x0000000000000000000000000000000000000006])
+    │   └─ ← [Stop]
+    ├─ [0] VM::stopPrank()
+    │   └─ ← [Return]
+    ├─ [18670] PuppyRaffle::getActivePlayerIndex(ECMul: [0x0000000000000000000000000000000000000007]) [staticcall]
+    │   └─ ← [Return] 6
+    ├─ [0] VM::startPrank(ECMul: [0x0000000000000000000000000000000000000007])
+    │   └─ ← [Return]
+    ├─ [44463] PuppyRaffle::refund(6)
+    │   ├─ [6000] PRECOMPILES::ecmul{value: 1000000000000000000}(0x)
+    │   │   └─ ← [Return] (0, 0)
+    │   ├─ emit RaffleRefunded(player: ECMul: [0x0000000000000000000000000000000000000007])
+    │   └─ ← [Stop]
+    ├─ [0] VM::stopPrank()
+    │   └─ ← [Return]
+    ├─ [21288] PuppyRaffle::getActivePlayerIndex(ECPairing: [0x0000000000000000000000000000000000000008]) [staticcall]
+    │   └─ ← [Return] 7
+    ├─ [0] VM::startPrank(ECPairing: [0x0000000000000000000000000000000000000008])
+    │   └─ ← [Return]
+    ├─ [83457] PuppyRaffle::refund(7)
+    │   ├─ [45000] PRECOMPILES::ecpairing{value: 1000000000000000000}()
+    │   │   └─ ← [Return] true
+    │   ├─ emit RaffleRefunded(player: ECPairing: [0x0000000000000000000000000000000000000008])
+    │   └─ ← [Stop]
+    ├─ [0] VM::stopPrank()
+    │   └─ ← [Return]
+    ├─ [0] VM::warp(86402 [8.64e4])
+    │   └─ ← [Return]
+    ├─ [0] VM::roll(2)
+    │   └─ ← [Return]
+    ├─ [0] VM::expectRevert(custom error 0xf4844814)
+    │   └─ ← [Return]
+    ├─ [82430] PuppyRaffle::selectWinner()
+    │   ├─ [0] 0x0000000000000000000000000000000000000000::fallback{value: 6400000000000000000}()
+    │   │   └─ ← [OutOfFunds] EvmError: OutOfFunds
+    │   └─ ← [Revert] PuppyRaffle: Failed to send prize pool to winner
+    └─ ← [Stop]
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; finished in 902.24µs (225.24µs CPU time)
+
+Ran 1 test suite in 4.66ms (902.24µs CPU time): 1 tests passed, 0 failed, 0 skipped (1 total tests)
+```
 
 
 
