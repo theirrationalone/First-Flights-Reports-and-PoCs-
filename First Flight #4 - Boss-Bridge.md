@@ -103,5 +103,101 @@
 
 ## Reconnaissance
 
+- `L1Token.sol::L1Token`
 
-                               
+```solidity
+constructor() ERC20("BossBridgeToken", "BBT") {
+    // @info: minting on deployment
+    // @info: msg.sender is not sanitized
+    // 10_000_000_e18 or 10 million erc20 with 18 decimals of precision
+    _mint(msg.sender, INITIAL_SUPPLY * 10 ** decimals());
+}
+```
+
+- `L1Vault.sol::L1Vault`
+
+```solidity
+function approveTo(address target, uint256 amount) external onlyOwner {
+    // @info: owner is approving spender to spend
+    // @issue: if target is a zero address amount lost forever
+    // @question: they already know about zero addresses, is it really a valid issue?
+    token.approve(target, amount);
+}
+```
+
+- `TokenFactory.sol::TokenFactory`
+
+```solidity
+// @info: Missing Indexed keyword
+event TokenDeployed(string symbol, address addr);
+
+//...
+
+function deployToken(string memory symbol, bytes memory contractBytecode) public onlyOwner returns (address addr) {
+    // @info: using create (CREATE2 EVM OPCODE)
+    // @issue: might not compatible with zksync era
+    assembly {
+        addr := create(0, add(contractBytecode, 0x20), mload(contractBytecode))
+    }
+    s_tokenToAddress[symbol] = addr;
+    emit TokenDeployed(symbol, addr);
+}
+```
+
+- `BossBridge.sol::BossBridge`
+
+```solidity
+// @info: missing indexed keyword
+event Deposit(address from, address to, uint256 amount);
+
+constructor(IERC20 _token) Ownable(msg.sender) {
+    token = _token;
+    vault = new L1Vault(token);
+    // Allows the bridge to move tokens out of the vault to facilitate withdrawals
+    // @info: maximum of uint256 is allowed to this contract (the boss bridge) to spend from vault
+    vault.approveTo(address(this), type(uint256).max);
+}
+
+function depositTokensToL2(address from, address l2Recipient, uint256 amount) external whenNotPaused {
+    // @info: due to DEPOSIT_LIMIT, a race condition could occur among users
+    // @issue: front-running, there should have a deposit limit per user instead
+    if (token.balanceOf(address(vault)) + amount > DEPOSIT_LIMIT) {
+        revert L1BossBridge__DepositLimitReached();
+    }
+    // @info: from can be any arbitrary address targeted by attacker (msg.sender) after approval phishing
+    token.safeTransferFrom(from, address(vault), amount);
+
+    // Our off-chain service picks up this event and mints the corresponding tokens on L2
+    emit Deposit(from, l2Recipient, amount);
+}
+
+//...
+
+function withdrawTokensToL1(address to, uint256 amount, uint8 v, bytes32 r, bytes32 s) external {
+    sendToL1(
+        v,
+        r,
+        s,
+        abi.encode(
+            address(token),
+            0, // value
+            abi.encodeCall(IERC20.transferFrom, (address(vault), to, amount))
+        )
+    );
+
+    // @info: missing withdraw event
+}
+
+```
+
+
+
+
+
+<br/>
+<br/>
+<br/>
+<br/>
+<br/>
+
+##### Auditor|Sec-Res|White-Hat: *theirrationalone*
