@@ -13,12 +13,15 @@ Please head to First-Flights's contests Known-issues section
 
 - `VotingBooth.sol::VotingBooth`
 
+- Resource: [PUSH0 Support](https://docs.arbitrum.io/arbitrum-essentials/arbitrum-vs-ethereum/solidity-support)
+
 ```solidity
 //...
 
 constructor(address[] memory allowList) payable {
     // @info: now it's 2026 and arbitrum supports PUSH0
     // @note: no issue with PUSH0 on arbitrum
+    // @res: https://docs.arbitrum.io/arbitrum-essentials/arbitrum-vs-ethereum/solidity-support
     
     //...
 
